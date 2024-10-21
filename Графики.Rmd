@@ -1,0 +1,216 @@
+---
+title: "Bessonov D. A. 1.4 31.05"
+author: "..."
+date: '31.05.2024'
+output:
+  html_document: 
+    df_print: paged
+    number_sections: false
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+    theme: united
+    highlight: tango
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+```
+Начало сделал, как делали на семинарах, но еще пришлось сменить файл с данными, так как все данные были типа character, пришлось писать макросы (здесь я его написал, код в R не будет работать соответственно):
+```
+Sub ConvertYesNoToTrueFalse()
+    Dim cell As Range
+    Dim ws As Worksheet
+    
+    Set ws = ThisWorkbook.Sheets("shopping_trends_updated")
+    
+    For Each cell In ws.UsedRange
+        If cell.Value = "Yes" Then
+            cell.Value = True
+        ElseIf cell.Value = "No" Then
+            cell.Value = False
+        End If
+    Next cell
+    
+End Sub
+Sub Convert_Text_to_NUmbers()
+Selection.NumberFormat = "General"
+Selection.Value = Selection.Value
+End Sub
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(forcats)
+library(readxl)
+library(tidyverse)
+library(naniar)
+data <- read_excel("D:/clothesd.xlsm")
+```
+
+Наши переменные:
+
+Customer ID - ID клиента Age - возраст клиента Gender - пол клиента
+(мужчина/женщина) Item Purchased - товар, купленный клиентом Category -
+категория товара Purchase Amount (USD) - сумма покупки Location - где
+была совершена покупка Size - размер товара Color - цвет товара Season -
+сезон покупки Review Rating - как клиент оценил товар Subscription
+Status - есть ли у клиента подписка (да/нет) Shipping Type - способ
+доставки Discount Applied - была ли применена скидка (да/нет) Promo Code
+Used - был ли применён промокод (да/нет) Previous Purchases - сколько
+покупок было у клиента до заказа Payment Method - способ оплаты
+Frequency of Purchases - как часто клиент совершает покупки (каждые три
+месяца, каждый год, каждый квартал, каждый месяц, каждые две недели)
+
+```{r}
+summary(data)
+```
+
+Далее посмотрел сколько уникальных значений в столбцах, чтобы присвоить им нужный тип данных, на семинарах мы проходили, что фактор хорошо делать для двух уникальных имен в переменных, я посмотрел несколько видео, решил, что для 7 и меньше также подойдет.
+
+```{r}
+unique(data$Size)
+unique(data$Category)
+unique(data$Season)
+unique(data$`Frequency of Purchases`)
+unique(data$`Shipping Type`)
+unique(data$`Payment Method`)
+```
+Присвоил данным нужные форматы:
+```{r}
+data$`Customer ID` = as.numeric(data$`Customer ID`)
+data$Age = as.numeric(data$Age)
+data$`Purchase Amount (USD)` = as.numeric(data$`Purchase Amount (USD)`)
+data$`Review Rating` = as.numeric(data$`Review Rating`)
+data$`Previous Purchases` = as.numeric(data$`Previous Purchases`)
+data$Gender = as.factor(data$Gender)
+data$Size = as.factor(data$Size)
+data$Category = as.factor(data$Category)
+data$Season = as.factor(data$Season)
+data$`Frequency of Purchases` = as.factor(data$`Frequency of Purchases`)
+data$`Shipping Type` = as.factor(data$`Shipping Type`)
+data$`Payment Method` = as.factor(data$`Payment Method`)
+data$`Subscription Status` = as.logical(data$`Subscription Status`)
+data$`Discount Applied` = as.logical(data$`Discount Applied`)
+data$`Promo Code Used` = as.logical(data$`Promo Code Used`)
+```
+
+Проверил на NA:
+```{r}
+gg_miss_var(data)
+```
+
+Проверил, все ли хорошо с данными, все ли типы правильны.
+
+```{r}
+summary(data)
+```
+Теперь про исследование и графики.
+Я решил, что проанализируем покупателей с подпиской и без подписки, так как это вполне реальная бизнес-задача, проанализировать данные по подписке и увеличить количество клиентов с подпиской. Не писал,откуда данные на графиках, так как сайт не известен, ссылку на файл вставлять не корректно.
+1) График
+Сначала я построил column chart, который и отражает распределение статуса подписки у клиентов.
+Я считаю 27% клиентов, пользующихся подпиской,это очень хороший показатель, особенно для ритейла одежды.
+
+```{r}
+data <- data %>%
+  mutate(`Subscription Status` = ifelse(`Subscription Status`, "подключена", "отсутствует"))
+
+ggplot(data, aes(y = `Subscription Status`, fill = `Subscription Status`)) +
+  geom_bar(stat = "count", position = "stack", color = "black") +
+  geom_text(stat = "count", aes(label = after_stat(count)), hjust = -0.1, color = "black") +
+  labs(title = "Распределение статуса подписки",
+       x = "Количество клиентов",
+       y = "Статус подписки") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(hjust = 0)) +
+  scale_x_discrete(expand = expansion(mult = c(0.1, 0.5))) +
+  theme(axis.title.x = element_text(size = 12, family = "Times New Roman")) +
+  theme(plot.title = element_text(size = 16, family = "Times New Roman", face = "bold", hjust = 0)) +
+  guides(fill = FALSE)
+```
+
+2) График
+Далее я создал density plot, чтобы узнать распределение клиентов (с подпиской)/(без подписки) по возрасту. Оказалось, что немалая  часть покупателей с подпиской это люди от 50 до 60 лет. У покупателей без подписки распределение нормальное. Аудитория покупки одежды рассредоточена от 25 до 65 лет.
+
+```{r}
+data$`Subscription Status` <- factor(data$`Subscription Status`, labels = c("Подписка отсутствует", "Подписка активна"))
+
+subscribed_users_data <- data[data$`Subscription Status` == "Подписка активна", ]
+
+non_subscribed_users_data <- data[data$`Subscription Status` == "Подписка отсутствует", ]
+
+ggplot(data, aes(x = Age, fill = `Subscription Status`)) +
+  geom_density(alpha = 0.7) +
+  facet_wrap(~`Subscription Status`, scales = "free_y") +
+  labs(title = "Плотность распределения возраста пользователей", subtitle = "Возраст с 18 до 70 лет") +
+  xlab("Возраст") +
+  ylab("Плотность") +
+  theme_minimal() +
+  theme(legend.position = "none", text = element_text(family = "Times New Roman")) + 
+  theme(plot.title = element_text(size = 16, family = "Times New Roman", face = "bold", hjust = 0))
+```
+
+3) График
+Потом, из вывода, что множество людей от 50 до 60 покупают по подписке, решил выяснить способ оплаты. Моя гипотеза, что основным способом будет Cash не подтвердилась. Клиенты из каждой категории пользуются разными способами оплаты примерно в равном количестве.Но клиенты с подпиской предпочитают дебетовую карту.
+
+Примечание: не получилось сделать, чтобы куски pie chart были от большего к меньшему, и суммы в pie charts
+ 100.2% и 99.9% из-за округления процентов.
+
+```{r}
+data$`Subscription Status` <- factor(data$`Subscription Status`, labels = c(FALSE, TRUE))
+
+payment_data <- data %>%
+  group_by(`Subscription Status`, `Payment Method`) %>%
+  summarise(Count = n()) %>%
+  mutate(Percent = round(Count/sum(Count) * 100, 1))
+
+payment_data <- payment_data %>%
+  arrange(`Subscription Status`, desc(Count)) %>%
+  group_by(`Subscription Status`) %>%
+  mutate(Percent = round(Count/sum(Count) * 100, 1))
+
+payment_data$`Subscription Status Label` <- factor(payment_data$`Subscription Status`, levels = c(FALSE, TRUE), labels = c("Без подписки", "Активная подписка"))
+
+ggplot(payment_data, aes(x = "", y = Percent, fill = factor(`Payment Method`))) + 
+  geom_bar(stat = "identity", width = 1, color = "white") +
+  geom_text(aes(label = paste0(Percent, "%"), x = 1.2), position = position_stack(vjust = 0.5), size = 3, family = "Times New Roman") +
+  coord_polar("y") +
+  labs(title = "Методы оплаты клиентов", fill = "Метод оплаты клиента", title1 = element_text(face = "bold", size = 14, family = "Times New Roman", hjust = 0)) +
+  scale_fill_manual(values = c("Credit Card" = "#FFE4C4", "PayPal" = "#CDB79E", "Venmo" = "#8B7D6B", "Cash" = "#EEDFCC", "Bank Transfer" = "antiquewhite", "Debit Card" = "#EED5B7")) +
+  theme_minimal() +
+  facet_wrap(~`Subscription Status Label`) +
+  theme_void() +  # Remove axis and background
+  theme(plot.title = element_text(size = 16, family = "Times New Roman", face = "bold", hjust = 0))
+```
+
+4) График
+В конце я хотел узнать, покупают ли больше клиенты с подпиской. Снова оказался неправ.Графики почти схожи, но у клиентов без подписки чуть выше верхний квартиль, и чуть ниже нижний.
+
+```{r}
+theme_set(theme_minimal(base_family = "Times New Roman"))
+
+data$`Subscription Status` <- factor(data$`Subscription Status`, labels = c("Подписка отсутствует", "Подписка подключена"))
+
+subscribed_users_data <- data[data$`Subscription Status` == "Подписка подключена", ]
+unsubscribed_users_data <- data[data$`Subscription Status` == "Подписка отсутствует", ]
+
+ggplot(data, aes(x = '', y = `Purchase Amount (USD)`)) +
+geom_boxplot(data = subscribed_users_data, fill = "lightblue", color = "blue") +
+geom_boxplot(data = unsubscribed_users_data, fill = "#CD5C5C", color = "#8B3A3A") +
+facet_wrap(~`Subscription Status`, scales = "free_y") +
+labs( title = "Сумма покупки у клиентов, исходя из наличия подписки", title1 = element_text(face = "bold", size = 14, family = "Times New Roman"),
+subtitle = "Суммы исчисляются в долларах США") +
+theme_minimal() +
+labs(x = "", y = "Сумма покупки") +
+theme(plot.title = element_text(size = 16, family = "Times New Roman", face = "bold", hjust = 0))
+```
+
+Все выводы были описаны на промежуточных шагах.Конец.

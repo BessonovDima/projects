@@ -1,0 +1,1043 @@
+---
+title: "Групповой проект по анализу характеристик игроков, участвовавших в профессиональных матчах по Dota 2"
+author: "Команда №  500" 
+output:
+  pdf_document:
+    latex_engine: xelatex
+    extra_dependencies: ["fontspec"]
+fontsize: 12pt
+mainfont: "Times New Roman"
+header-includes:
+  - \usepackage{tcolorbox}
+  - \usepackage{titling}
+  - \usepackage{fancyhdr}
+  - \usepackage{sectsty}
+  - \usepackage{hyperref}
+  - \allsectionsfont{\centering}
+  - \pagestyle{fancy}
+  - \fancyhf{}
+  - \fancyfoot[C]{\thepage}
+  - \renewcommand{\maketitle}{
+      \begin{titlepage}
+        \centering
+        \vspace*{\fill}
+        {\LARGE \bfseries \thetitle\par}
+        \vspace{1cm}
+        {\large \theauthor\par}
+        \vspace{1cm}
+        {\large \thedate\par}
+        \vspace*{\fill}
+        \thispagestyle{empty}
+      \end{titlepage}
+    }
+  - \hypersetup{colorlinks=true, linkcolor=blue, urlcolor=blue, citecolor=blue}
+  - \usepackage{xcolor}
+urlcolor: blue
+---
+```{r include=FALSE}
+# Каждой из команд достается своё подмножество датасета на основании ID вашей команды.
+# Введите ID вашей команды в чанке ниже и приступайте к работе!
+library(dplyr)
+teamID <- 500  # введите ID команды
+
+
+
+set.seed(teamID)
+data <- read.csv("D:/РППД/dota2_proleague.csv")
+
+
+
+sample_size <- round(dim(data)[1] * 0.85)
+data <- sample_n(data, sample_size)
+```
+
+```{r}
+data <- subset(data, select = -c(player_slot, account_id, patch, additional_units, lose, radiant_win, region))
+```
+
+```{r}
+data$isRadiant <- as.integer(data$isRadiant == "True")
+```
+
+```{r}
+# Оставляем только матчи, которые проходили в режиме "Captain's mode"
+data <- data[data$game_mode == 2, ]
+
+# Определяем матчи, которые встречаются в датасете 10 раз
+matches_count <- table(data$match_id)
+matches_to_keep <- names(matches_count[matches_count == 10])
+
+# Оставляем только матчи, которые встречаются в датасете 10 раз
+data <- data[data$match_id %in% matches_to_keep, ]
+```
+
+```{r}
+# Подсчет количества уникальных значений переменной match_id
+unique_match_ids <- unique(data$match_id)
+num_unique_match_ids <- length(unique_match_ids)
+
+# Вывод результата
+print(paste("Количество уникальных значений переменной match_id в датасете data:", num_unique_match_ids))
+```
+```{r}
+data <- subset(data, select = -c(gold_spent))
+```
+
+```{r}
+df <- read.csv("D:/РППД/heroes.csv")
+```
+
+```{r}
+# Переименование колонки id в hero_id в датасете df
+colnames(df)[colnames(df) == "id"] <- "hero_id"
+
+# Объединение датасетов по ключу hero_id
+data <- merge(data, df[, c("hero_id", "primary_attr", "attack_type")], by = "hero_id", all.x = TRUE)
+```
+
+```{r}
+# Поиск героя или героев с наибольшим GPM
+max_gpm <- max(data$`gold_per_min`)
+heroes_with_max_gpm <- data[data$`gold_per_min` == max_gpm, "hero_id"]
+
+# Вывод ID героев с наибольшим GPM
+paste(heroes_with_max_gpm, collapse = ", ")
+```
+```{r}
+  # Фильтрация героев с primary attribute "agi"
+  agi_heroes <- data[data$primary_attr == "agi",]
+  
+  # Нахождение героя с максимальным GPM среди "ловкачей"
+  max_gpm_agi_hero <- agi_heroes[which.max(agi_heroes$gold_per_min), "hero_id"]
+  
+  # Вывод ID героя с максимальным GPM
+  print(max_gpm_agi_hero)
+```
+
+```{r} 
+# Грузиться будет долго
+library(jsonlite)
+
+# Преобразование строковых значений в список датафреймов
+data$kills_log <- lapply(data$kills_log, function(x) {
+  tryCatch(
+    fromJSON(gsub("'", '"', x)),  # Replace single quotes with double quotes
+    error = function(e) data.frame(time = numeric(), key = numeric())  # Return empty data frame on error
+  )
+})
+
+# Создание векторов для значений времени убийств и медианных промежутков
+time_values <- c()
+median_free_times <- c()
+
+# Извлечение значений времени из каждого элемента списка и рассчет медианных промежутков
+for (i in 1:nrow(data)) {
+  if (length(data$kills_log[[i]]) == 0) {
+    median_free_time <- data$duration[i]
+  } else {
+    time_values <- data$kills_log[[i]]$time
+    time_diff <- c(0, diff(time_values))
+    median_free_time <- median(time_diff, na.rm = TRUE)
+  }
+  
+  median_free_times <- c(median_free_times, median_free_time)
+}
+
+mean_median_free_time <- mean(median_free_times, na.rm = TRUE)
+
+median_free_times[is.na(median_free_times)] <- mean_median_free_time
+data$median_free_time <- median_free_times
+# Предупреждение: пакет ‘jsonlite’ был собран под R версии 4.3.3
+```
+
+```{r}
+print(mean_median_free_time)
+```
+
+```{r}
+# Удалить переменную kills_log
+data$kills_log <- NULL
+
+# Перевести переменную start_time в формат UNIX
+data$start_time <- as.numeric(as.POSIXct(data$start_time, format="%Y-%m-%d %H:%M:%S"))
+
+# Вычислить kda_ratio в соответствии с указанными условиями
+data$kda_ratio <- ifelse(data$deaths != 0, (data$kills + data$assists) / data$deaths, data$kills + data$assists)
+
+```
+
+```{r}
+# Вычислить медиану переменной kda_ratio
+median_kda_ratio <- median(data$kda_ratio, na.rm = TRUE)
+
+# Вывод медианного значения
+print(median_kda_ratio)
+```
+
+```{r}
+# Загрузим библиотеку jsonlite для работы с JSON
+library(jsonlite)
+
+# Загрузим JSON-файл level_exp.json
+level_exp_data <- fromJSON("D:/РППД/level_exp.json")
+
+# Создадим переменную exp в датасете, сопоставляя значения по ключу level
+data$exp <- level_exp_data[as.character(data$level)]
+
+# Удалим переменную level из датасета
+data$level <- NULL
+```
+
+```{r}
+# Удаляем матчи с пропущенными значениями в переменной lane
+data <- data[complete.cases(data$lane), ]
+
+# Создаем новые бинарные переменные на основе переменной lane
+data$lane_1 <- as.integer(data$lane == 1)
+data$lane_2 <- as.integer(data$lane == 2)
+data$lane_3 <- as.integer(data$lane == 3)
+
+# Удаляем переменную lane
+data$lane <- NULL
+
+# Создаем новые бинарные переменные на основе переменной primary_attr
+data$str_attr <- as.integer(data$primary_attr == "str")
+data$agi_attr <- as.integer(data$primary_attr == "agi")
+data$int_attr <- as.integer(data$primary_attr == "int")
+data$all_attr <- as.integer(data$primary_attr == "all")
+
+# Удаляем переменную primary_attr
+data$primary_attr <- NULL
+
+# Создаем новые бинарные переменные на основе переменной attack_type
+data$melee_attack <- as.integer(data$attack_type == "Melee")
+data$ranged_attack <- as.integer(data$attack_type == "Ranged")
+
+# Удаляем переменную attack_type
+data$attack_type <- NULL
+```
+
+```{r}
+data <- subset(data, select = -c(kda, X, hero_id, game_mode))
+```
+
+```{r}
+data$teamfight_participation[data$teamfight_participation > 1] <- 1
+```
+
+```{r}
+mean_teamfight_participation <- mean(data$teamfight_participation)
+median_teamfight_participation <- median(data$teamfight_participation)
+print(mean_teamfight_participation)
+print(median_teamfight_participation)
+```
+```{r}
+# Замена переменной last_hits на сумму neautral_kills и lane_kills
+data$last_hits <- data$neutral_kills + data$lane_kills
+
+# Создание переменной nonancient_kills
+data$nonancient_kills <- data$neutral_kills - data$ancient_kills
+
+# Удаление переменной neutral_kills
+data <- subset(data, select = -c(neutral_kills))
+
+# Создание переменных-индикаторов healing_zero и exp_zero
+data$healing_zero <- ifelse(data$hero_healing == 0, 1, 0)
+data$exp_zero <- ifelse(data$exp == 0, 1, 0)
+```
+
+```{r}
+correlation <- cor.test(data$kills, data$gold_per_min)
+
+correlation
+```
+
+```{r}
+# Проведение корреляционного анализа и вычисление p-value после логарифмического преобразования
+correlation_test_log <- cor.test(log(1 + data$kills), data$gold_per_min)
+correlation_test_log
+```
+
+```{r}
+# Создание подвыборки для переменной hero_healing, где healing_zero = 0
+sub_data_hero_healing <- data[data$healing_zero == 0, "hero_healing"]
+
+# Создание подвыборки для переменной exp, где exp_zero = 0
+sub_data_exp <- data[data$exp_zero == 0, "exp"]
+
+# Построение гистограммы для переменной hero_healing
+hist(sub_data_hero_healing, main="Histogram of hero_healing", xlab="hero_healing")
+
+# Проверка типа переменной sub_data_exp
+class(sub_data_exp)
+
+# Преобразование переменной в числовой формат, если она не является числовой
+sub_data_exp <- as.numeric(as.character(sub_data_exp))
+
+# Построение гистограммы с исправленной переменной
+hist(sub_data_exp, main = "Histogram of exp", xlab = "exp")
+
+```
+
+```{r}
+# Логарифмическое преобразование переменных
+log_hero_healing <- log(sub_data_hero_healing + 1)  # Добавляем 1, чтобы избежать логарифма от 0
+log_exp <- log(sub_data_exp + 1)
+
+# Построение гистограмм и boxplot'ов для логарифмированных данных
+hist(log_hero_healing, main="Histogram of log(hero_healing)", xlab="log(hero_healing)")
+
+hist(log_exp, main="Histogram of log(exp)", xlab="log(exp)")
+
+```
+
+```{r}
+sqrt_exp <- sqrt(sub_data_exp)
+sqrt_exp2 <- sqrt(sqrt(sub_data_exp))
+sqrt_exp3 <- sqrt(sqrt(sqrt(sub_data_exp)))
+sqrt_exp4 <- sqrt(sqrt(sqrt(sqrt(sub_data_exp))))
+sqrt_exp5 <- sqrt(sqrt(sqrt(sqrt(sqrt(sub_data_exp)))))
+                  
+hist(sqrt_exp, main="Histogram of sqrt(exp)", xlab="sqrt(exp)")
+
+hist(sqrt_exp2, main="Histogram of sqrt(sqrt(exp))", xlab="sqrt(sqrt(exp)")
+
+hist(sqrt_exp3, main="Histogram of sqrt(sqrt(sqrt(exp)))", xlab="sqrt(sqrt(sqrt(exp))")
+
+hist(sqrt_exp4, main="Histogram of sqrt(sqrt(sqrt(sqrt(exp))))", xlab="sqrt(sqrt(sqrt(sqrt(exp)))")
+
+hist(sqrt_exp5, main="Histogram of sqrt(sqrt(sqrt(sqrt(sqrt(exp)))))", xlab="sqrt(sqrt(sqrt(sqrt(sqrt(exp)))")
+
+sqrt_hero_healing1 <- sqrt(sub_data_hero_healing +1 )
+sqrt_hero_healing2 <- sqrt(sqrt(sub_data_hero_healing +1))
+sqrt_hero_healing3 <- sqrt(sqrt(sqrt(sub_data_hero_healing +1)))
+sqrt_hero_healing4 <- sqrt(sqrt(sqrt(sqrt(sub_data_hero_healing +1))))
+sqrt_hero_healing5 <- sqrt(sqrt(sqrt(sqrt(sqrt(sub_data_hero_healing +1)))))
+                  
+hist(sqrt_hero_healing1, main="Histogram of sqrt(hero_healing)", xlab="sqrt(hero_healing)")
+
+hist(sqrt_hero_healing2, main="Histogram of sqrt(sqrt(hero_healing))", xlab="sqrt(sqrt(hero_healing)")
+
+hist(sqrt_hero_healing3, main="Histogram of sqrt(sqrt(sqrt(hero_healing)))", xlab="sqrt(sqrt(sqrt(hero_healing))")
+
+hist(sqrt_hero_healing4, main="Histogram of sqrt(sqrt(sqrt(sqrt(hero_healing))))", xlab="sqrt(sqrt(sqrt(sqrt(hero_healing)))")
+
+hist(sqrt_hero_healing5, main="Histogram of sqrt(sqrt(sqrt(sqrt(sqrt(hero_healing)))))", xlab="sqrt(sqrt(sqrt(sqrt(sqrt(hero_healing)))")
+```
+```{r}
+data$exp <- as.numeric(data$exp)
+data$exp_zero <- as.numeric(data$exp_zero)
+```
+
+
+
+```{r}
+num_data <- data[, sapply(data, is.numeric)]
+# Построение матрицы корреляций
+correlation_matrix <- cor(num_data)
+
+# Вывод матрицы корреляций
+print(correlation_matrix)
+```
+
+```{r}
+# Выполнение корреляционного анализа
+cor_test_last_hits <- cor.test(data$last_hits, data$gold_per_min)
+cor_test_lane_kills <- cor.test(data$lane_kills, data$gold_per_min)
+cor_test_nonancient_kills <- cor.test(data$nonancient_kills, data$gold_per_min)
+cor_test_last_hits
+cor_test_lane_kills
+cor_test_nonancient_kills
+```
+
+```{r}
+cor_test_last_hits_lane <- cor.test(data$last_hits, data$lane_kills)
+cor_test_last_hits_nonancient <- cor.test(data$last_hits, data$nonancient_kills)
+cor_test_lane_nonancient <- cor.test(data$lane_kills, data$nonancient_kills)
+cor_test_last_hits_lane
+cor_test_last_hits_nonancient
+cor_test_lane_nonancient
+```
+
+```{r}
+# Исключение нечисловых переменных из поднаборов данных
+data_lane_2_1 <- data[data$lane_2 == 1, ]
+data_lane_2_2 <- data[data$lane_2 == 0, ]
+
+data_lane_2_1_numeric <- data_lane_2_1[sapply(data_lane_2_1, is.numeric)]
+data_lane_2_2_numeric <- data_lane_2_2[sapply(data_lane_2_2, is.numeric)]
+
+# Проверка, что в поднаборах есть числовые переменные
+if (ncol(data_lane_2_1_numeric) > 0 & ncol(data_lane_2_2_numeric) > 0) {
+    # Построение матрицы корреляций для первой подгруппы
+    cor_matrix_lane_2_1 <- cor(data_lane_2_1_numeric)
+    
+    # Построение матрицы корреляций для второй подгруппы
+    cor_matrix_lane_2_2 <- cor(data_lane_2_2_numeric)
+    
+    # Вывод результатов
+    print("Матрица корреляций для подгруппы 1:")
+    print(cor_matrix_lane_2_1)
+    
+    print("Матрица корреляций для подгруппы 2:")
+    print(cor_matrix_lane_2_2)
+} else {
+    print("В поднаборах нет числовых переменных для построения матрицы корреляций.")
+}
+```
+
+```{r}
+cor_test_last_hits_data_lane_2_1 <- cor.test(data_lane_2_1$last_hits, data_lane_2_1$gold_per_min)
+cor_test_exp_data_lane_2_1 <- cor.test(data_lane_2_1$exp, data_lane_2_1$gold_per_min)
+cor_test_kills_data_lane_2_1<- cor.test(data_lane_2_1$kills, data_lane_2_1$gold_per_min)
+cor_test_last_hits_data_lane_2_2 <- cor.test(data_lane_2_2$last_hits, data_lane_2_2$gold_per_min)
+cor_test_lane_kills_data_lane_2_2 <- cor.test(data_lane_2_2$lane_kills, data_lane_2_2$gold_per_min)
+cor_test_nonancient_kills_data_lane_2_2<- cor.test(data_lane_2_2$nonancient_kills, data_lane_2_2$gold_per_min)
+cor_test_last_hits_data_lane_2_1
+cor_test_kills_data_lane_2_1
+cor_test_exp_data_lane_2_1
+cor_test_last_hits_data_lane_2_2
+cor_test_lane_kills_data_lane_2_2
+cor_test_nonancient_kills_data_lane_2_2
+```
+
+```{r}
+# Разделение датасета на две части
+data_teamfight_participation_low_median <- data[data$teamfight_participation < median_teamfight_participation, ]
+data_teamfight_participation_high_median <- data[data$teamfight_participation >= median_teamfight_participation, ]
+
+# Исключение нечисловых переменных из подгрупп
+data_teamfight_participation_low_median_numeric <- data_teamfight_participation_low_median[sapply(data_teamfight_participation_low_median, is.numeric)]
+data_teamfight_participation_high_median_numeric <- data_teamfight_participation_high_median[sapply(data_teamfight_participation_high_median, is.numeric)]
+
+# Проверка, что в подгруппах есть числовые переменные
+if (ncol(data_teamfight_participation_low_median_numeric) > 0 & ncol(data_teamfight_participation_high_median_numeric) > 0) {
+    # Построение матрицы корреляций для первой подгруппы
+    cor_matrix_teamfight_participation_low_median <- cor(data_teamfight_participation_low_median_numeric)
+    
+    # Построение матрицы корреляций для второй подгруппы
+    cor_matrix_teamfight_participation_high_median <- cor(data_teamfight_participation_high_median_numeric)
+    
+    # Вывод результатов
+    print("Матрица корреляций для подгруппы 1:")
+    print(cor_matrix_teamfight_participation_low_median)
+    
+    print("Матрица корреляций для подгруппы 2:")
+    print(cor_matrix_teamfight_participation_high_median)
+} else {
+    print("В подгруппах нет числовых переменных для построения матрицы корреляций.")
+}
+```
+
+```{r}
+cor_test_last_hits_data_teamfight_participation_low_median_numeric <- cor.test(data_teamfight_participation_low_median_numeric$last_hits, data_teamfight_participation_low_median_numeric$gold_per_min)
+
+cor_test_lane_kills_data_teamfight_participation_low_median_numeric <- cor.test(data_teamfight_participation_low_median_numeric$lane_kills, data_teamfight_participation_low_median_numeric$gold_per_min)
+
+cor_test_nonancient_kills_data_teamfight_participation_low_median_numeric <- cor.test(data_teamfight_participation_low_median_numeric$nonancient_kills, data_teamfight_participation_low_median_numeric$gold_per_min)
+
+cor_test_last_hits_data_teamfight_participation_high_median_numeric <- cor.test(data_teamfight_participation_high_median_numeric$last_hits, data_teamfight_participation_high_median_numeric$gold_per_min)
+
+cor_test_lane_kills_data_teamfight_participation_high_median_numeric <- cor.test(data_teamfight_participation_high_median_numeric$lane_kills, data_teamfight_participation_high_median_numeric$gold_per_min)
+
+cor_test_kills_data_teamfight_participation_high_median_numeric <- cor.test(data_teamfight_participation_high_median_numeric$kills, data_teamfight_participation_high_median_numeric$gold_per_min)
+
+cor_test_last_hits_data_teamfight_participation_low_median_numeric
+cor_test_lane_kills_data_teamfight_participation_low_median_numeric
+cor_test_nonancient_kills_data_teamfight_participation_low_median_numeric
+cor_test_last_hits_data_teamfight_participation_high_median_numeric
+cor_test_lane_kills_data_teamfight_participation_high_median_numeric
+cor_test_kills_data_teamfight_participation_high_median_numeric
+```
+
+```{r}
+# Создание датасетов на основе типа атаки
+data_ranged_attack <- data[data$ranged_attack == 1, ]
+data_melee_attack <- data[data$melee_attack == 1, ]
+
+# Сначала выберем только числовые переменные из датасетов
+numeric_cols <- sapply(data_ranged_attack, is.numeric)
+data_ranged_attack_numeric <- data_ranged_attack[, numeric_cols]
+
+numeric_cols <- sapply(data_melee_attack, is.numeric)
+data_melee_attack_numeric <- data_melee_attack[, numeric_cols]
+
+# Затем вычислим корреляцию для датасета с ranged атакой
+correlation_ranged <- cor(data_ranged_attack_numeric)
+
+# Затем вычислим корреляцию для датасета с melee атакой
+correlation_melee <- cor(data_melee_attack_numeric)
+
+# Вывод корреляции для датасета с ranged атакой
+print("Корреляция для датасета с ranged атакой:")
+print(correlation_ranged)
+
+# Вывод корреляции для датасета с melee атакой
+print("Корреляция для датасета с melee атакой:")
+print(correlation_melee)
+```
+
+```{r}
+cor_test_last_hits_data_melee_attack_numeric <- cor.test(data_melee_attack_numeric$last_hits, data_melee_attack_numeric$gold_per_min)
+
+cor_test_lane_kills_data_melee_attack_numeric <- cor.test(data_melee_attack_numeric$lane_kills, data_melee_attack_numeric$gold_per_min)
+
+cor_test_nonancient_kills_data_melee_attack_numeric <- cor.test(data_melee_attack_numeric$nonancient_kills, data_melee_attack_numeric$gold_per_min)
+
+cor_test_last_hits_data_ranged_attack_numeric <- cor.test(data_ranged_attack_numeric$last_hits, data_ranged_attack_numeric$gold_per_min)
+
+cor_test_lane_kills_data_ranged_attack_numeric <- cor.test(data_ranged_attack_numeric$lane_kills, data_ranged_attack_numeric$gold_per_min)
+
+cor_test_nonancient_kills_data_ranged_attack_numeric <- cor.test(data_ranged_attack_numeric$nonancient_kills, data_ranged_attack_numeric$gold_per_min)
+
+cor_test_last_hits_data_melee_attack_numeric
+cor_test_lane_kills_data_melee_attack_numeric
+cor_test_nonancient_kills_data_melee_attack_numeric
+cor_test_last_hits_data_ranged_attack_numeric
+cor_test_lane_kills_data_ranged_attack_numeric
+cor_test_nonancient_kills_data_ranged_attack_numeric
+```
+
+```{r}
+# Вычисление медианы переменной deaths
+median_deaths <- median(data$deaths)
+
+# Разделение датасета на две части по медиане переменной deaths
+data_deaths_low_median <- data[data$deaths < median_deaths, ]
+data_deaths_high_median <- data[data$deaths >= median_deaths, ]
+
+# Исключение нечисловых переменных из подгрупп
+data_deaths_low_median_numeric <- data_deaths_low_median[sapply(data_deaths_low_median, is.numeric)]
+data_deaths_high_median_numeric <- data_deaths_high_median[sapply(data_deaths_high_median, is.numeric)]
+
+# Проверка, что в подгруппах есть числовые переменные
+if (ncol(data_deaths_low_median_numeric) > 0 & ncol(data_deaths_high_median_numeric) > 0) {
+    # Построение матрицы корреляций для первой подгруппы
+    cor_matrix_deaths_low_median <- cor(data_deaths_low_median_numeric)
+    
+    # Построение матрицы корреляций для второй подгруппы
+    cor_matrix_deaths_high_median <- cor(data_deaths_high_median_numeric)
+    
+    # Вывод результатов
+    print("Матрица корреляций для подгруппы 1:")
+    print(cor_matrix_deaths_low_median)
+    
+    print("Матрица корреляций для подгруппы 2:")
+    print(cor_matrix_deaths_high_median)
+} else {
+    print("В подгруппах нет числовых переменных для построения матрицы корреляций.")
+}
+```
+
+```{r}
+cor_test_last_hits_data_deaths_low_median_numeric <- cor.test(data_deaths_low_median_numeric$last_hits, data_deaths_low_median_numeric$gold_per_min)
+
+cor_test_lane_kills_data_deaths_low_median_numeric <- cor.test(data_deaths_low_median_numeric$lane_kills, data_deaths_low_median_numeric$gold_per_min)
+
+cor_test_exp_data_deaths_low_median_numeric <- cor.test(data_deaths_low_median_numeric$exp, data_deaths_low_median_numeric$gold_per_min)
+
+cor_test_last_hits_data_deaths_high_median_numeric <- cor.test(data_deaths_high_median_numeric$last_hits, data_deaths_high_median_numeric$gold_per_min)
+
+cor_test_lane_kills_data_deaths_high_median_numeric <- cor.test(data_deaths_high_median_numeric$lane_kills, data_deaths_high_median_numeric$gold_per_min)
+
+cor_test_nonancient_kills_data_deaths_high_median_numeric <- cor.test(data_deaths_high_median_numeric$nonancient_kills, data_deaths_high_median_numeric$gold_per_min)
+
+cor_test_last_hits_data_deaths_low_median_numeric
+cor_test_lane_kills_data_deaths_low_median_numeric
+cor_test_exp_data_deaths_low_median_numeric
+cor_test_last_hits_data_deaths_high_median_numeric
+cor_test_lane_kills_data_deaths_high_median_numeric
+cor_test_nonancient_kills_data_deaths_high_median_numeric
+```
+```{r}
+# Вычисление медианы переменной deaths
+median_deaths <- median(data$deaths)
+
+# Разделение датасета на две части по медиане переменной deaths
+data_deaths_low_median <- data[data$deaths < median_deaths, ]
+data_deaths_high_median <- data[data$deaths >= median_deaths, ]
+
+# Исключение нечисловых переменных из подгрупп
+data_deaths_low_median_numeric <- data_deaths_low_median[sapply(data_deaths_low_median, is.numeric)]
+data_deaths_high_median_numeric <- data_deaths_high_median[sapply(data_deaths_high_median, is.numeric)]
+
+# Дополнительное разделение на две подгруппы в каждой из изначальных подгрупп
+data_deaths_low_low_median <- data_deaths_low_median[data_deaths_low_median$deaths < median(data_deaths_low_median$deaths), ]
+data_deaths_low_high_median <- data_deaths_low_median[data_deaths_low_median$deaths >= median(data_deaths_low_median$deaths), ]
+
+data_deaths_high_low_median <- data_deaths_high_median[data_deaths_high_median$deaths < median(data_deaths_high_median$deaths), ]
+data_deaths_high_high_median <- data_deaths_high_median[data_deaths_high_median$deaths >= median(data_deaths_high_median$deaths), ]
+
+# Проверка, что в подгруппах есть числовые переменные
+if (ncol(data_deaths_low_median_numeric) > 0 & ncol(data_deaths_high_median_numeric) > 0 &
+    ncol(data_deaths_low_low_median) > 0 & ncol(data_deaths_low_high_median) > 0 &
+    ncol(data_deaths_high_low_median) > 0 & ncol(data_deaths_high_high_median) > 0 ) {
+    
+    # Построение матрицы корреляций для первой подгруппы
+    cor_matrix_deaths_low_median <- cor(data_deaths_low_median_numeric)
+    
+    # Построение матрицы корреляций для второй подгруппы
+    cor_matrix_deaths_high_median <- cor(data_deaths_high_median_numeric)
+    
+    cor_matrix_deaths_low_low_median <- cor(data_deaths_low_low_median)
+    cor_matrix_deaths_low_high_median <- cor(data_deaths_low_high_median)
+    cor_matrix_deaths_high_low_median <- cor(data_deaths_high_low_median)
+    cor_matrix_deaths_high_high_median <- cor(data_deaths_high_high_median)
+
+    # Вывод результатов
+    print("Матрица корреляций для подгруппы 1:")
+    print(cor_matrix_deaths_low_median)
+    
+    print("Матрица корреляций для подгруппы 2:")
+    print(cor_matrix_deaths_high_median)
+    
+    print("Матрица корреляций для подгруппы 3:")
+    print(cor_matrix_deaths_low_low_median)
+    
+    print("Матрица корреляций для подгруппы 4:")
+    print(cor_matrix_deaths_low_high_median)
+    
+    print("Матрица корреляций для подгруппы 5:")
+    print(cor_matrix_deaths_high_low_median)
+    
+    print("Матрица корреляций для подгруппы 6:")
+    print(cor_matrix_deaths_high_high_median)
+} else {
+    print("В подгруппах нет числовых переменных для построения матрицы корреляций.")
+}
+```
+```{r}
+cor_test_last_hits_data_deaths_low_median_numeric <- cor.test(data_deaths_low_median_numeric$last_hits, data_deaths_low_median_numeric$gold_per_min)
+
+cor_test_lane_kills_data_deaths_low_median_numeric <- cor.test(data_deaths_low_median_numeric$lane_kills, data_deaths_low_median_numeric$gold_per_min)
+
+cor_test_exp_data_deaths_low_median_numeric <- cor.test(data_deaths_low_median_numeric$exp, data_deaths_low_median_numeric$gold_per_min)
+
+cor_test_last_hits_data_deaths_high_median_numeric <- cor.test(data_deaths_high_median_numeric$last_hits, data_deaths_high_median_numeric$gold_per_min)
+
+cor_test_lane_kills_data_deaths_high_median_numeric <- cor.test(data_deaths_high_median_numeric$lane_kills, data_deaths_high_median_numeric$gold_per_min)
+
+cor_test_nonancient_kills_data_deaths_high_median_numeric <- cor.test(data_deaths_high_median_numeric$nonancient_kills, data_deaths_high_median_numeric$gold_per_min)
+
+
+
+cor_test_last_hits_data_deaths_low_low_median <- cor.test(data_deaths_low_low_median$last_hits, data_deaths_low_low_median$gold_per_min)
+
+cor_test_lane_kills_data_deaths_low_low_median <- cor.test(data_deaths_low_low_median$lane_kills, data_deaths_low_low_median$gold_per_min)
+
+cor_test_nonancient_kills_data_deaths_low_low_median <- cor.test(data_deaths_low_low_median$nonancient_kills, data_deaths_low_low_median$gold_per_min)
+
+
+
+cor_test_last_hits_data_deaths_low_high_median <- cor.test(data_deaths_low_high_median$last_hits, data_deaths_low_high_median$gold_per_min)
+
+cor_test_lane_kills_data_deaths_low_high_median <- cor.test(data_deaths_low_high_median$lane_kills, data_deaths_low_high_median$gold_per_min)
+
+cor_test_exp_data_deaths_low_high_median <- cor.test(data_deaths_low_high_median$exp, data_deaths_low_high_median$gold_per_min)
+
+
+
+cor_test_last_hits_data_deaths_high_low_median <- cor.test(data_deaths_high_low_median$last_hits, data_deaths_high_low_median$gold_per_min)
+
+cor_test_lane_kills_data_deaths_high_low_median <- cor.test(data_deaths_high_low_median$lane_kills, data_deaths_high_low_median$gold_per_min)
+
+cor_test_exp_data_deaths_high_low_median <- cor.test(data_deaths_high_low_median$exp, data_deaths_high_low_median$gold_per_min)
+
+
+
+cor_test_last_hits_data_deaths_high_high_median <- cor.test(data_deaths_high_high_median$last_hits, data_deaths_high_high_median$gold_per_min)
+
+cor_test_lane_kills_data_deaths_high_high_median <- cor.test(data_deaths_high_high_median$lane_kills, data_deaths_high_high_median$gold_per_min)
+
+cor_test_nonancient_kills_data_deaths_high_high_median <- cor.test(data_deaths_high_high_median$nonancient_kills, data_deaths_high_high_median$gold_per_min)
+
+cor_test_last_hits_data_deaths_low_median_numeric
+cor_test_lane_kills_data_deaths_low_median_numeric
+cor_test_exp_data_deaths_low_median_numeric
+cor_test_last_hits_data_deaths_high_median_numeric
+cor_test_lane_kills_data_deaths_high_median_numeric
+cor_test_nonancient_kills_data_deaths_high_median_numeric
+cor_test_last_hits_data_deaths_low_low_median
+cor_test_lane_kills_data_deaths_low_low_median
+cor_test_nonancient_kills_data_deaths_low_low_median
+cor_test_last_hits_data_deaths_low_high_median
+cor_test_lane_kills_data_deaths_low_high_median
+cor_test_exp_data_deaths_low_high_median
+cor_test_last_hits_data_deaths_high_low_median
+cor_test_lane_kills_data_deaths_high_low_median
+cor_test_exp_data_deaths_high_low_median
+cor_test_last_hits_data_deaths_high_high_median
+cor_test_lane_kills_data_deaths_high_high_median
+cor_test_nonancient_kills_data_deaths_high_high_median
+```
+
+
+```{r}
+# Предварительная обработка данных
+data_processedd <- data[data$isRadiant %in% c(0, 1) & data$win %in% c(0, 1), ]  # Фильтрация данных
+
+# Создание двух выборок для света и тьмы
+data_radiant <- data_processedd[data_processedd$isRadiant == 1, "win"]
+data_dire <- data_processedd[data_processedd$isRadiant == 0, "win"]
+
+# Проведение t-теста
+t_test_result <- t.test(data_radiant, data_dire)
+
+# Печать результатов
+print(t_test_result)
+```
+
+```{r}
+# Предварительная обработка данных
+data_processeddd <- data[data$melee_attack %in% c(0, 1) & data$ranged_attack %in% c(0, 1) &
+                       data$healing_zero %in% c(0, 1), ]  # Фильтрация данных
+
+# Создание двух выборок для melee и ranged atack
+data_melee <- data_processeddd[data_processeddd$melee_attack == 1, "gold_per_min"]
+data_ranged <- data_processeddd[data_processeddd$ranged_attack == 1, "gold_per_min"]
+
+# Проведение t-теста для атаки
+t_test_attack <- t.test(data_melee, data_ranged)
+
+# Вывод результатов для атаки
+print(t_test_attack)
+
+# Создание двух выборок для healing_zero
+data_healing_zero_true <- data_processeddd[data_processeddd$healing_zero == 1, "gold_per_min"]
+data_healing_zero_false <- data_processeddd[data_processeddd$healing_zero == 0, "gold_per_min"]
+
+# Проведение t-теста для healing_zero
+t_test_healing <- t.test(data_healing_zero_true, data_healing_zero_false)
+
+# Вывод результатов для healing_zero
+print(t_test_healing)
+```
+```{r}
+# Для 5-го задания
+# Вычисление медианы gold_per_min для героев с melee_attack
+median_gpm_melee <- median(data_processeddd[data_processeddd$melee_attack == 1, "gold_per_min"])
+median_gpm_ranged <- median(data_processeddd[data_processeddd$ranged_attack == 1, "gold_per_min"])
+# Вывод результата
+print(median_gpm_melee)
+print(median_gpm_ranged)
+```
+
+```{r}
+# Загрузка и работы с данными (замените data на ваш фактический фрейм данных)
+data_processeD <- subset(data, lane_1 %in% c(0, 1) & lane_2 %in% c(0, 1) & lane_3 %in% c(0, 1))
+
+# Вычисление средних значений для каждой группы lane
+mean_lane_1 <- mean(data_processeD[data_processeD$lane_1 == 1, "gold_per_min"], na.rm = TRUE)
+mean_lane_2 <- mean(data_processeD[data_processeD$lane_2 == 1, "gold_per_min"], na.rm = TRUE)
+mean_lane_3 <- mean(data_processeD[data_processeD$lane_3 == 1, "gold_per_min"], na.rm = TRUE)
+
+# Вывод результатов
+print(paste("Средний gold_per_min для lane_1 =", mean_lane_1))
+print(paste("Средний gold_per_min для lane_2 =", mean_lane_2))
+print(paste("Средний gold_per_min для lane_3 =", mean_lane_3))
+```
+```{r}
+# Проведение парных двухсторонних t-тестов для проверки гипотезы о равенстве средних между группами
+alpha <- 0.05
+p_values <- c()
+
+# T-тест между lane_1 и lane_2
+t_test_1_2 <- t.test(data_processeD[data_processeD$lane_1 == 1, "gold_per_min"], 
+                     data_processeD[data_processeD$lane_2 == 1, "gold_per_min"])
+p_values[1] <- t_test_1_2$p.value
+
+# T-тест между lane_1 и lane_3
+t_test_1_3 <- t.test(data_processeD[data_processeD$lane_1 == 1, "gold_per_min"], 
+                     data_processeD[data_processeD$lane_3 == 1, "gold_per_min"])
+p_values[2] <- t_test_1_3$p.value
+
+# T-тест между lane_2 и lane_3
+t_test_2_3 <- t.test(data_processeD[data_processeD$lane_2 == 1, "gold_per_min"], 
+                     data_processeD[data_processeD$lane_3 == 1, "gold_per_min"])
+p_values[3] <- t_test_2_3$p.value
+
+# Проведение коррекции методом Бонферрони
+significance_level <- alpha / 3
+adjusted_p_values <- p.adjust(p_values, method = "bonferroni")
+
+# Вывод результатов
+for (i in 1:3) {
+  if (adjusted_p_values[i] < significance_level) {
+    cat("Для пары lane_", i, "p-значение:", adjusted_p_values[i], "- Отклоняем H0\n")
+  } else {
+    cat("Для пары lane_", i, "p-значение:", adjusted_p_values[i], "- Принимаем H0\n")
+  }
+}
+```
+
+```{r}
+# Библиотека для проведения t-тестов
+library(stats)
+
+# Создание подмножества данных для каждой группы lane
+data_lane_1 <- data_processeD[data_processeD$lane_1 == 1, "gold_per_min"]
+data_lane_2 <- data_processeD[data_processeD$lane_2 == 1, "gold_per_min"]
+data_lane_3 <- data_processeD[data_processeD$lane_3 == 1, "gold_per_min"]
+
+# Вычисление средних значений
+mean_lane_1 <- mean(data_lane_1, na.rm = TRUE)
+mean_lane_2 <- mean(data_lane_2, na.rm = TRUE)
+mean_lane_3 <- mean(data_lane_3, na.rm = TRUE)
+
+# Вывод результатов
+cat("Средний gold_per_min для lane_1 =", mean_lane_1, "\n")
+cat("Средний gold_per_min для lane_2 =", mean_lane_2, "\n")
+cat("Средний gold_per_min для lane_3 =", mean_lane_3, "\n")
+
+# Проведение двухсторонних t-тестов между парами групп
+t_test_12 <- t.test(data_lane_1, data_lane_2, alternative = "two.sided")
+t_test_13 <- t.test(data_lane_1, data_lane_3, alternative = "two.sided")
+t_test_23 <- t.test(data_lane_2, data_lane_3, alternative = "two.sided")
+
+# Вывод результатов t-тестов
+cat("\nРезультаты t-тестов:\n")
+cat("t-тест между lane_1 и lane_2:\n")
+print(t_test_12)
+cat("\nt-тест между lane_1 и lane_3:\n")
+print(t_test_13)
+cat("\nt-тест между lane_2 и lane_3:\n")
+print(t_test_23)
+```
+
+```{r}
+ #Загрузка и работы с данными (замените data на ваш фактический фрейм данных)
+data_processeDD <- subset(data, str_attr %in% c(0, 1) & agi_attr %in% c(0, 1) & int_attr %in% c(0, 1) & all_attr %in% c(0, 1))
+
+# Вычисление средних значений для каждой группы lane
+mean_str_attr <- mean(data_processeDD[data_processeD$str_attr == 1, "gold_per_min"], na.rm = TRUE)
+mean_agi_attr <- mean(data_processeDD[data_processeD$agi_attr == 1, "gold_per_min"], na.rm = TRUE)
+mean_int_attr <- mean(data_processeDD[data_processeD$int_attr == 1, "gold_per_min"], na.rm = TRUE)
+mean_all_attr <- mean(data_processeDD[data_processeD$all_attr == 1, "gold_per_min"], na.rm = TRUE)
+# Вывод результатов
+print(paste("Средний gold_per_min для str_attr =", mean_str_attr))
+print(paste("Средний gold_per_min для agi_attr =", mean_agi_attr))
+print(paste("Средний gold_per_min для int_attr =", mean_int_attr))
+print(paste("Средний gold_per_min для all_attr =", mean_all_attr))
+```
+
+```{r}
+# Проведение парных двухсторонних t-тестов для проверки гипотезы о равенстве средних между группами
+alpha <- 0.05
+p_values <- c()
+
+# T-тест между lane_1 и lane_2
+t_test_str_agi <- t.test(data_processeDD[data_processeDD$str_attr == 1, "gold_per_min"], 
+                     data_processeDD[data_processeDD$agi_attr == 1, "gold_per_min"])
+p_values[1] <- t_test_str_agi$p.value
+
+# T-тест между lane_1 и lane_3
+t_test_str_int <- t.test(data_processeDD[data_processeDD$str_attr == 1, "gold_per_min"], 
+                     data_processeDD[data_processeDD$int_attr == 1, "gold_per_min"])
+p_values[2] <- t_test_str_int$p.value
+
+# T-тест между lane_2 и lane_3
+t_test_agi_int <- t.test(data_processeDD[data_processeDD$agi_attr == 1, "gold_per_min"], 
+                     data_processeDD[data_processeDD$int_attr == 1, "gold_per_min"])
+p_values[3] <- t_test_agi_int$p.value
+
+# Проведение коррекции методом Бонферрони
+significance_level <- alpha / 3
+adjusted_p_values <- p.adjust(p_values, method = "bonferroni")
+
+# Вывод результатов
+for (i in 1:3) {
+  if (adjusted_p_values[i] < significance_level) {
+    cat("Для пары lane_", i, "p-значение:", adjusted_p_values[i], "- Отклоняем H0\n")
+  } else {
+    cat("Для пары lane_", i, "p-значение:", adjusted_p_values[i], "- Принимаем H0\n")
+  }
+}
+```
+```{r}
+# Библиотека для проведения t-тестов
+library(stats)
+
+# Создание подмножества данных для каждой группы lane
+data_str_attr <- data_processeDD[data_processeDD$str_attr == 1, "gold_per_min"]
+data_agi_attr <- data_processeDD[data_processeDD$agi_attr == 1, "gold_per_min"]
+data_int_attr <- data_processeDD[data_processeDD$int_attr == 1, "gold_per_min"]
+data_all_attr <- data_processeDD[data_processeDD$all_attr == 1, "gold_per_min"]
+
+# Вычисление средних значений
+mean_str_attr <- mean(data_str_attr, na.rm = TRUE)
+mean_agi_attr <- mean(data_agi_attr, na.rm = TRUE)
+mean_int_attr <- mean(data_int_attr, na.rm = TRUE)
+mean_all_attr <- mean(data_all_attr, na.rm = TRUE)
+
+# Проведение двухсторонних t-тестов между парами групп
+t_test_Str_agi <- t.test(data_str_attr, data_agi_attr, alternative = "two.sided")
+t_test_Str_int <- t.test(data_str_attr, data_int_attr, alternative = "two.sided")
+t_test_Agi_int <- t.test(data_agi_attr, data_int_attr, alternative = "two.sided")
+t_test_Str_all <- t.test(data_str_attr, data_all_attr, alternative = "two.sided")
+t_test_Agi_all <- t.test(data_agi_attr, data_all_attr, alternative = "two.sided")
+t_test_Int_all <- t.test(data_int_attr, data_all_attr, alternative = "two.sided")
+
+# Вывод результатов t-тестов
+cat("\nРезультаты t-тестов:\n")
+cat("t-тест между str и agi:\n")
+print(t_test_Str_agi)
+cat("\nt-тест между str и int:\n")
+print(t_test_Str_int)
+cat("\nt-тест между agi и int:\n")
+print(t_test_Agi_int)
+cat("t-тест между str и all:\n")
+print(t_test_Str_all)
+cat("\nt-тест между agi и all:\n")
+print(t_test_Agi_all)
+cat("\nt-тест между int и all:\n")
+print(t_test_Int_all)
+```
+```{r}
+# Построение линейной регрессии
+model <- lm(gold_per_min ~ last_hits, data=data)
+
+# Вывод результатов регрессии
+summary(model)
+
+# Получение значимости коэффициента beta и p-value
+beta_p_value <- summary(model)$coefficients["last_hits", 4]
+alpha <- 0.05
+
+# Проверка значимости коэффициента при уровне значимости alpha=0.05
+if (beta_p_value < alpha) {
+  cat("Коэффициент beta значим (p-value =", beta_p_value, ") при уровне значимости alpha =", alpha, "\n")
+} else {
+  cat("Коэффициент beta не значим (p-value =", beta_p_value, ") при уровне значимости alpha =", alpha, "\n")
+}
+
+# Интерпретация коэффициента beta
+cat("Коэффициент beta показывает на сколько изменяется 'gold_per_min' при изменении 'last_hits' на одну единицу.\n")
+```
+```{r}
+# Построение Q-Q plot для переменной last_hits
+qqnorm(data$last_hits)
+qqline(data$last_hits)
+```
+
+```{r}
+# Создание нового датасета с условием last_hits > 0
+filtered_data <- data[data$last_hits > 0, ]
+
+# Создание новой переменной с логарифмом значения last_hits (исключая нули и отрицательные значения)
+filtered_data$log_last_hits <- log(filtered_data$last_hits)
+
+# Построение линейной регрессии с логарифмом last_hits
+model_log <- lm(gold_per_min ~ log_last_hits, data=filtered_data)
+
+# Вывод результатов регрессии с логарифмической трансформацией
+summary(model_log)
+```
+
+```{r}
+# Создание нового датасета с условием last_hits > 0
+filtered_datA <- data[data$last_hits > 0, ]
+
+# Создание новой переменной с логарифмом значения last_hits (исключая нули и отрицательные значения)
+filtered_datA$sqrt_last_hits <- sqrt(filtered_datA$last_hits)
+
+# Построение линейной регрессии с логарифмом last_hits
+model_sqrt <- lm(gold_per_min ~ sqrt_last_hits, data=filtered_datA)
+
+# Вывод результатов регрессии с логарифмической трансформацией
+summary(model_sqrt)
+```
+```{r}
+data <- subset(data, select = -c(match_id, ranged_attack, all_attr))
+```
+
+```{r}
+# Сначала подготовим данные, выбрав указанные переменные
+data_subseT <- data[, c("duration", "start_time", "assists", "deaths", "kills",
+                        "teamfight_participation", "camps_stacked", "creeps_stacked", 
+                        "last_hits", "lane_kills", "firstblood_claimed", "obs_placed",
+                        "observer_kills", "ancient_kills", "nonancient_kills", "isRadiant",
+                        "win", "median_free_time", "kda_ratio", "exp", "lane_1", "lane_2", 
+                        "str_attr", "agi_attr", "int_attr", "melee_attack", "hero_healing",
+                        "healing_zero", "exp_zero", "gold_per_min")]
+
+# Убедимся, что данные не содержат пропущенных значений
+data_subseT <- na.omit(data_subseT)
+
+# Построение линейной регрессии 
+model <- lm(gold_per_min ~ ., data=data_subseT)
+
+# Вывод результатов регрессии
+summary(model)
+```
+
+```{r}
+# Логарифмирование или взятие корня для указанных переменных
+data_subseT_log <- data_subseT
+data_subseT_log$deaths <- log(data_subseT$deaths + 1)  # Добавляем 1, чтобы избежать логарифма от нуля
+data_subseT_log$isRadiant <- sqrt(data_subseT$isRadiant)
+data_subseT_log$lane_1 <- log(data_subseT$lane_1 + 1)  # Добавляем 1, чтобы избежать логарифма от нуля
+data_subseT_log$melee_attack <- sqrt(data_subseT$melee_attack)
+
+# Перестройка линейной регрессии с преобразованными переменными
+model_log <- lm(gold_per_min ~ ., data=data_subseT_log)
+
+# Вывод результатов регрессии
+summary(model_log)
+```
+
+```{r}
+# Применение квадратного корня к указанным переменным
+data_subseT_sqrt <- data_subseT
+data_subseT_sqrt$deaths <- sqrt(data_subseT$deaths)
+data_subseT_sqrt$isRadiant <- sqrt(data_subseT$isRadiant)
+data_subseT_sqrt$lane_1 <- sqrt(data_subseT$lane_1)
+data_subseT_sqrt$melee_attack <- sqrt(data_subseT$melee_attack)
+
+# Перестройка линейной регрессии с преобразованными переменными
+model_sqrt <- lm(gold_per_min ~ ., data=data_subseT_sqrt)
+
+# Вывод результатов регрессии
+summary(model_sqrt)
+```
+
+```{r}
+# Стандартизация независимых непрерывных переменных
+data_subseT_scaled_log <- data_subseT_log
+continuous_vars <- c("duration", "start_time", "assists", "deaths", "kills", 
+                     "teamfight_participation", "camps_stacked", "creeps_stacked",
+                     "last_hits", "lane_kills", "obs_placed", "observer_kills",
+                     "ancient_kills", "nonancient_kills", "median_free_time",
+                     "kda_ratio", "exp", "str_attr", "agi_attr", "int_attr",
+                     "melee_attack", "hero_healing", "healing_zero", "exp_zero")
+
+data_subseT_scaled_log[continuous_vars] <- scale(data_subseT_log[continuous_vars])
+
+# Построение линейной регрессии на стандартизованных данных
+model_scaled_log <- lm(gold_per_min ~ ., data=data_subseT_scaled_log)
+
+# Вывод результатов регрессии
+summary(model_scaled_log)
+```
+
+```{r}
+data_subseT_scaled_sqrt <- data_subseT_sqrt
+continuous_vars <- c("duration", "start_time", "assists", "deaths", "kills", 
+                     "teamfight_participation", "camps_stacked", "creeps_stacked",
+                     "last_hits", "lane_kills", "obs_placed", "observer_kills",
+                     "ancient_kills", "nonancient_kills", "median_free_time",
+                     "kda_ratio", "exp", "str_attr", "agi_attr", "int_attr",
+                     "melee_attack", "hero_healing", "healing_zero", "exp_zero")
+
+data_subseT_scaled_sqrt[continuous_vars] <- scale(data_subseT_sqrt[continuous_vars])
+
+# Построение линейной регрессии на стандартизованных данных
+model_scaled_sqrt <- lm(gold_per_min ~ ., data=data_subseT_scaled_sqrt)
+
+# Вывод результатов регрессии
+summary(model_scaled_sqrt)
+```
+
+```{r}
+summary(data)
+```
+
